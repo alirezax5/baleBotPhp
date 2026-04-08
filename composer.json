@@ -1,0 +1,41 @@
+{
+  "name": "alirezax5/bale-bot-php",
+  "keywords": [
+    "bale",
+    "bot",
+    "bale bot",
+    "بله",
+    "ربات بله",
+    "ساخت ربات بله"
+  ],
+  "homepage": "https://github.com/alirezax5/baleBotPhp",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Alirezax5",
+      "homepage": "http://alirezax5.ir",
+      "role": "Developer"
+    }
+  ],
+  "require": {
+    "php": ">=7.0",
+    "ext-json": "*",
+    "ext-curl": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "baleBotPhp\\": "src/",
+      "baleBotPhp\\Types\\": "src/Types",
+      "baleBotPhp\\Traits\\": "src/Traits"
+    }
+  },
+  "repositories": [
+    {
+      "type": "composer",
+      "url": "https://mirror2.chabokan.net/composer/"
+    },
+    {
+      "packagist.org": false
+    }
+  ]
+}
