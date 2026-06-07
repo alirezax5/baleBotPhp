@@ -13,19 +13,16 @@ class bale
         isChatTypes,
         isMedia,
         method,
-        otherTrait {
-        // حل تعارض بین دو trait
-        otherTrait::isMedia insteadof isMedia;
-    }
+        otherTrait ;
 
     private const API_BASE_URL = 'https://tapi.bale.ai';
     private const DEFAULT_FILE_URL_TEMPLATE = '{url}/file/bot{token}/{file_path}';
 
-    // تنظیمات Retry
+    // Retry Settings
     private int $maxRetries = 3;
     private int $retryDelayMs = 500;
 
-    // ثابت‌های چت و نوع پیام
+    // Chat & Message Types
     public const PRIVATE    = 'private';
     public const GROUP      = 'group';
     public const SUPERGROUP = 'supergroup';
@@ -56,6 +53,9 @@ class bale
     private string $apiUrl;
     private string $fileUrlTemplate;
 
+    /** @var array<string> Token Stack for temporary switching */
+    private array $tokenStack = [];
+
     public function __construct(
         string $token,
         string $apiUrl = self::API_BASE_URL,
@@ -70,7 +70,7 @@ class bale
         $this->maxRetries = $maxRetries;
         $this->retryDelayMs = $retryDelayMs;
 
-        $this->setToken($token);   // استفاده از متد setter
+        $this->setToken($token);
         $this->initialize();
     }
 
@@ -82,56 +82,70 @@ class bale
         $this->clearCache();
     }
 
-    // ====================== Token Management (مولتی ربات) ======================
+    // ====================== Token Management ======================
 
-    /**
-     * تغییر توکن
-     */
     public function setToken(string $token): self
     {
         $this->botToken = $token;
         $this->urlFile = str_replace('{token}', $token, $this->fileUrlTemplate);
-        $this->clearCache();                    // مهم: کش را پاک کن
+        $this->clearCache();
         return $this;
     }
 
-    /**
-     * دریافت توکن فعلی
-     */
     public function getToken(): string
     {
         return $this->botToken;
     }
 
-    /**
-     * ایجاد یک نمونه جدید با توکن دلخواه (Immutable)
-     */
     public function withToken(string $token): self
     {
         $clone = clone $this;
         $clone->setToken($token);
-        // داده ورودی را هم کپی می‌کنیم
         $clone->data = clone $this->data;
         return $clone;
     }
 
     /**
-     * بهترین روش برای تعویض موقت توکن
-     * توکن اصلی بعد از اتمام callback به صورت خودکار برمی‌گردد
+     * تغییر موقت توکن (ذخیره توکن قبلی)
      */
-    public function usingToken(string $token, callable $callback): mixed
+    public function switchToken(string $newToken): self
     {
-        $originalToken = $this->getToken();
+        $this->tokenStack[] = $this->botToken;
+        $this->setToken($newToken);
 
-        try {
-            $this->setToken($token);
-            return $callback($this);
-        } finally {
-            $this->setToken($originalToken);   // تضمین بازگشت حتی در صورت خطا
-        }
+        // LogHandler::debug("🔄 Token switched → {$newToken} | Stack: " . count($this->tokenStack));
+        return $this;
     }
 
-    // ====================== Core API Call با Retry ======================
+    /**
+     * بازگشت به توکن قبلی
+     */
+    public function restoreToken(): self
+    {
+        if (empty($this->tokenStack)) {
+            // LogHandler::warning("⚠️ Token stack is empty");
+            return $this;
+        }
+
+        $previousToken = array_pop($this->tokenStack);
+        $this->setToken($previousToken);
+
+        // LogHandler::debug("🔙 Token restored → {$previousToken} | Remaining: " . count($this->tokenStack));
+        return $this;
+    }
+
+    public function clearTokenStack(): self
+    {
+        $this->tokenStack = [];
+        return $this;
+    }
+
+    public function getTokenStackCount(): int
+    {
+        return count($this->tokenStack);
+    }
+
+    // ====================== Core API Call ======================
 
     public function bot(string $method, array $data = [], bool $isUpload = false): ?\stdClass
     {
@@ -172,7 +186,6 @@ class bale
             }
 
             $attempt++;
-
             if (!$this->shouldRetry($curlError, $httpCode, $attempt)) {
                 break;
             }
@@ -191,34 +204,14 @@ class bale
 
     private function shouldRetry(string $curlError, int $httpCode, int $attempt): bool
     {
-        if ($attempt > $this->maxRetries) {
-            return false;
-        }
-
-        if (!empty($curlError)) {
-            return true;
-        }
-
-        if ($httpCode >= 500 && $httpCode < 600) {
-            return true;
-        }
-
-        if ($httpCode === 429) {
-            return true;
-        }
-
+        if ($attempt > $this->maxRetries) return false;
+        if (!empty($curlError)) return true;
+        if ($httpCode >= 500 && $httpCode < 600) return true;
+        if ($httpCode === 429) return true;
         return false;
     }
 
-    public function setRetryConfig(int $maxRetries = 3, int $retryDelayMs = 500): self
-    {
-        $this->maxRetries = $maxRetries;
-        $this->retryDelayMs = $retryDelayMs;
-        return $this;
-    }
-
-    // ====================== سایر متدها ======================
-
+    // بقیه متدها (buildUrl, getFileUrl, getInputData, setInputData, clearCache و ...) بدون تغییر
     private function buildUrl(string $method): string
     {
         return "{$this->apiUrl}/bot{$this->botToken}/{$method}";
@@ -259,22 +252,12 @@ class bale
         $this->cacheField = [];
     }
 
-    public function getUpdateId(): int
-    {
-        return $this->data->update_id ?? 0;
-    }
-
-    public function checkUpdateExists(string $key): bool
-    {
-        return isset($this->data->$key) && !empty($this->data->$key);
-    }
-
+    // متدهای getCachedUpdate, message(), editedMessage() و ... (بدون تغییر)
     private function getCachedUpdate(string $key, string $class): ?BaseType
     {
         if (!array_key_exists($key, $this->cacheType) && $this->checkUpdateExists($key)) {
             $this->cacheType[$key] = new $class($this->data->$key);
         }
-
         return $this->cacheType[$key] ?? null;
     }
 
@@ -296,5 +279,15 @@ class bale
     public function preCheckoutQuery(): ?PreCheckoutQuery
     {
         return $this->getCachedUpdate('pre_checkout_query', PreCheckoutQuery::class);
+    }
+
+    public function checkUpdateExists(string $key): bool
+    {
+        return isset($this->data->$key) && !empty($this->data->$key);
+    }
+
+    public function getUpdateId(): int
+    {
+        return $this->data->update_id ?? 0;
     }
 }
