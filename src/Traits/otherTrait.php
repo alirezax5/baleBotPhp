@@ -1,244 +1,303 @@
 <?php
 
+declare(strict_types=1);
+
 namespace baleBotPhp\Traits;
 
 trait otherTrait
 {
-
-    protected function getCachedValue($key, $callback)
+    /**
+     * دریافت مقدار کش‌شده یا محاسبه آن
+     */
+    protected function getCachedValue(string $key, callable $callback): mixed
     {
-        if (isset($this->cacheField[$key])) {
+        if (array_key_exists($key, $this->cacheField)) {
             return $this->cacheField[$key];
         }
 
-        $value = $callback();
-        $this->cacheField[$key] = $value;
-        return $value;
+        return $this->cacheField[$key] = $callback();
     }
 
-
-    protected function getMessageData($property, $default = null)
+    /**
+     * دریافت داده از پیام، callback_query یا pre_checkout_query
+     */
+    protected function getMessageData(string $property, mixed $default = null): mixed
     {
         return $this->getCachedValue($property, function () use ($property, $default) {
+            // اولویت: پیام معمولی
             if ($this->isMessage()) {
-                return $this->message()->$property ?? $default;
+                return $this->message()?->{$property} ?? $default;
             }
 
+            // Callback Query
             if ($this->isCallbackQuery()) {
+                $callbackQuery = $this->callbackQuery();
 
-                if (is_object($this->callbackQuery()->message) || is_array($this->callbackQuery()->message))
-                    return $this->callbackQuery()->message->$property;
+                // اگر پیام داخل callback query وجود داشته باشد
+                if ($callbackQuery?->message) {
+                    return $callbackQuery->message->{$property} ?? $default;
+                }
 
-                return $this->callbackQuery()->$property;
+                return $callbackQuery?->{$property} ?? $default;
             }
 
+            // Pre Checkout Query
             if ($this->isPreCheckoutQuery()) {
-                return $this->preCheckoutQuery()->$property;
+                return $this->preCheckoutQuery()?->{$property} ?? $default;
             }
 
             return $default;
         });
     }
 
-    public function messageID()
+    // ====================== Message Info ======================
+
+    public function messageID(): ?int
     {
         return $this->getMessageData('message_id');
     }
 
-    public function text()
+    public function text(): ?string
     {
         return $this->getMessageData('text');
     }
 
-    public function fromId()
+    public function caption(): ?string
     {
-        if (($this->isCallbackQuery()) and $this->isPrivate())
-            return $this->getMessageData('chat')->id ?? null;
+        return $this->getCachedValue('caption', function (): ?string {
+            if ($this->isEditedMessage()) {
+                return $this->editedMessage()?->caption;
+            }
 
-        return $this->getMessageData('from')->id ?? null;
+            return $this->message()?->caption;
+        });
     }
 
-    public function chatId()
-    {
-        if (($this->isPreCheckoutQuery()))
-            return $this->getMessageData('from')->id ?? null;
+    // ====================== User & Chat Info ======================
 
-        return $this->getMessageData('chat')->id ?? null;
+    public function fromId(): ?int
+    {
+        return $this->getCachedValue('fromId', function (): ?int {
+            if ($this->isCallbackQuery()) {
+                // در چت خصوصی، sender ممکن است در chat باشد
+                if ($this->isPrivate()) {
+                    return $this->callbackQuery()?->message?->chat?->id
+                        ?? $this->callbackQuery()?->from?->id;
+                }
+                return $this->callbackQuery()?->from?->id;
+            }
+
+            if ($this->isPreCheckoutQuery()) {
+                return $this->preCheckoutQuery()?->from?->id;
+            }
+
+            return $this->message()?->from?->id;
+        });
     }
 
-    public function firstName()
+    public function chatId(): ?int
     {
-        return $this->getMessageData('from')->first_name ?? null;
+        return $this->getCachedValue('chatId', function (): ?int {
+            if ($this->isPreCheckoutQuery()) {
+                return $this->preCheckoutQuery()?->from?->id;
+            }
+
+            return $this->getMessageData('chat')?->id;
+        });
     }
 
-    public function languageCode()
+    public function firstName(): ?string
     {
-        return $this->getMessageData('from')->language_code ?? null;
+        return $this->getMessageData('from')?->first_name;
     }
 
-    public function isPremium()
+    public function lastName(): ?string
     {
-        return $this->getMessageData('from')->is_premium ?? null;
+        return $this->getMessageData('from')?->last_name;
     }
 
-    public function lastName()
+    public function username(): ?string
     {
-        return $this->getMessageData('from')->last_name ?? null;
+        return $this->getMessageData('from')?->username;
     }
 
-    public function username()
+    public function languageCode(): ?string
     {
-        return $this->getMessageData('from')->username ?? null;
+        return $this->getMessageData('from')?->language_code;
     }
 
-    public function chatType()
+    public function isPremium(): ?bool
     {
-        return $this->getMessageData('chat')->type ?? null;
+        return $this->getMessageData('from')?->is_premium;
     }
 
-    public function msgType()
+    public function chatType(): ?string
     {
-        return $this->getCachedValue('msgType', function () {
-            if ($this->mediaType()) {
+        return $this->getMessageData('chat')?->type;
+    }
+
+    // ====================== Message Type Detection ======================
+
+    public function msgType(): string
+    {
+        return $this->getCachedValue('msgType', function (): string {
+            if ($this->mediaType() !== self::_TEXT) {
                 return self::_MEDIA;
             }
-            if ($this->message()->forward_origin ?? false) {
+
+            if ($this->message()?->forward_origin) {
                 return self::_FORWARD;
             }
+
             return self::_TEXT;
         });
     }
 
-    public function mediaType()
+    public function mediaType(): string
     {
-        return $this->getCachedValue('mediaType', function () {
+        return $this->getCachedValue('mediaType', function (): string {
             if (!$this->isMessage()) {
-                return false;
+                return self::_TEXT;
             }
+
             $message = $this->message();
-            $messageArray = get_object_vars($message->video); // تبدیل شیء به آرایه
-            file_put_contents('1.json', json_encode($messageArray));
 
-            foreach ([
-                         'video' => self::_VIDEO,
-                         'photo' => self::_PHOTO,
-                         'audio' => self::_AUDIO,
-                         'voice' => self::_VOICE,
-                         'animation' => self::_ANIMATION,
-                         'video_note' => self::_VIDEO_NOTE,
-                         'contact' => self::_CONTACT,
-                         'document' => self::_DOCUMENT,
-                         'sticker' => self::_STICKER,
-                         'game' => self::_GAME,
-                         'location' => self::_LOCATION,
-                     ] as $type => $constant) {
-                $value = $message->$type;
+            $mediaMap = [
+                'video'       => self::_VIDEO,
+                'photo'       => self::_PHOTO,
+                'audio'       => self::_AUDIO,
+                'voice'       => self::_VOICE,
+                'animation'   => self::_ANIMATION,
+                'video_note'  => self::_VIDEO_NOTE,
+                'contact'     => self::_CONTACT,
+                'document'    => self::_DOCUMENT,
+                'sticker'     => self::_STICKER,
+                'game'        => self::_GAME,
+                'location'    => self::_LOCATION,
+            ];
 
-                if (is_object($value) || is_array($value)) {
-
-                    return $constant;
+            foreach ($mediaMap as $key => $type) {
+                if (!empty($message?->{$key})) {
+                    return $type;
                 }
             }
+
             return self::_TEXT;
         });
     }
 
-    public function fileId()
+    // ====================== File Info ======================
+
+    public function fileId(): ?string
     {
-        return $this->getCachedValue('fileId', function () {
+        return $this->getCachedValue('fileId', function (): ?string {
             if (!$this->isMessage()) {
                 return null;
             }
+
             $message = $this->message();
-            foreach ([
-                         'document' => 'file_id',
-                         'audio' => 'file_id',
-                         'photo' => 'file_id',
-                         'video_note' => 'file_id',
-                         'video' => 'file_id',
-                         'voice' => 'file_id',
-                         'sticker' => 'file_id',
-                         'animation' => 'file_id',
-                     ] as $type => $property) {
-                if (isset($message->$type)) {
-                    return $message->$type->$property;
+            $types = ['document', 'audio', 'video_note', 'video', 'voice', 'sticker', 'animation'];
+
+            foreach ($types as $type) {
+                if (!empty($message?->{$type})) {
+                    return $message->{$type}->file_id ?? null;
                 }
             }
+
+            // Photo (largest size)
+            if (!empty($message?->photo)) {
+                return $message->photo[array_key_last($message->photo)]->file_id ?? null;
+            }
+
             return null;
         });
     }
 
-    public function mimeType()
+    public function mimeType(): ?string
     {
-        return $this->getCachedValue('mime_type', function () {
+        return $this->getCachedValue('mimeType', function (): ?string {
             if (!$this->isMessage()) {
                 return null;
             }
+
             $message = $this->message();
-            foreach ([
-                         'document' => 'mime_type',
-                         'audio' => 'mime_type',
-                         'photo' => 'mime_type',
-                         'video_note' => 'mime_type',
-                         'video' => 'mime_type',
-                         'voice' => 'mime_type',
-                         'sticker' => 'mime_type',
-                         'animation' => 'mime_type',
-                     ] as $type => $property) {
-                if (is_object($message->$type) or ($type == 'photo') and is_array($message->$type)) {
+            $types = ['document', 'audio', 'video_note', 'video', 'voice', 'sticker', 'animation'];
 
-                    if ($type == 'photo') {
-                        return $message->photo[0]->$property;
-
-                    }
-                    return $message->{$type}->{$property};
+            foreach ($types as $type) {
+                if (!empty($message?->{$type})) {
+                    return $message->{$type}->mime_type ?? null;
                 }
             }
+
+            if (!empty($message?->photo)) {
+                return $message->photo[array_key_last($message->photo)]->mime_type ?? null;
+            }
+
             return null;
         });
     }
 
-    public function fileSize()
+    public function fileSize(): ?int
     {
-        return $this->getCachedValue('fileSize', function () {
+        return $this->getCachedValue('fileSize', function (): ?int {
             if (!$this->isMessage()) {
                 return null;
             }
+
             $message = $this->message();
-            foreach ([
-                         'document' => 'file_size',
-                         'audio' => 'file_size',
-                         'photo' => 'file_size',
-                         'video_note' => 'file_size',
-                         'video' => 'file_size',
-                         'voice' => 'file_size',
-                         'sticker' => 'file_size',
-                         'animation' => 'file_size',
-                     ] as $type => $property) {
-                if (isset($message->$type)) {
-                    return $message->$type->$property;
+            $types = ['document', 'audio', 'video_note', 'video', 'voice', 'sticker', 'animation'];
+
+            foreach ($types as $type) {
+                if (!empty($message?->{$type})) {
+                    return $message->{$type}->file_size ?? null;
                 }
             }
+
+            if (!empty($message?->photo)) {
+                return $message->photo[array_key_last($message->photo)]->file_size ?? null;
+            }
+
             return null;
         });
     }
 
-    public function caption()
-    {
-        return $this->getCachedValue('caption', function () {
+    // ====================== Utility Methods ======================
 
-            if ($this->isEditedMessage() && isset($this->editedMessage()->caption)) {
-                return $this->editedMessage()->caption;
-            }
-            if ($this->message() && isset($this->message()->caption)) {
-                return $this->message()->caption;
-            }
-            return null;
-        });
+    /**
+     * آیا پیام ریپلای شده است؟
+     */
+    public function isReply(): bool
+    {
+        return $this->getMessageData('reply_to_message') !== null;
     }
 
-    public function pathToUrl($path)
+    /**
+     * شناسه پیامی که به آن ریپلای شده
+     */
+    public function replyToMessageId(): ?int
     {
-        return strtr($this->urlFile, ['{url}' => $this->apiUrl, '{token}' => $this->botToken]) . $path;
+        return $this->getMessageData('reply_to_message')?->message_id;
+    }
+
+
+    /**
+     * تبدیل path فایل به URL دانلود
+     */
+    public function pathToUrl(string $path): string
+    {
+        return rtrim($this->apiUrl, '/')
+            . '/file/bot'
+            . $this->botToken
+            . '/'
+            . ltrim($path, '/');
+    }
+
+    /**
+     * پاک‌سازی کش (مفید بعد از setInputData)
+     */
+    public function clearCache(): void
+    {
+        $this->cacheField = [];
+        $this->cacheType  = []; // اگر در bale.php هم وجود دارد
     }
 }

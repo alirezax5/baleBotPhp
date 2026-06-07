@@ -4,18 +4,21 @@ namespace baleBotPhp\Traits;
 
 trait isMedia
 {
-    protected static $mediaTypes = [
-        'video' => self::_VIDEO,
-        'photo' => self::_PHOTO,
-        'audio' => self::_AUDIO,
-        'voice' => self::_VOICE,
-        'animation' => self::_ANIMATION,
-        'video_note' => self::_VIDEO_NOTE,
-        'contact' => self::_CONTACT,
-        'document' => self::_DOCUMENT,
-        'sticker' => self::_STICKER,
-        'game' => self::_GAME,
-        'location' => self::_LOCATION,
+    /**
+     * Immutable map of media types
+     */
+    private const MEDIA_TYPES = [
+        'video' => 'video',
+        'photo' => 'photo',
+        'audio' => 'audio',
+        'voice' => 'voice',
+        'animation' => 'animation',
+        'video_note' => 'video_note',
+        'contact' => 'contact',
+        'document' => 'document',
+        'sticker' => 'sticker',
+        'game' => 'game',
+        'location' => 'location',
     ];
 
     public function isVideo(): bool
@@ -73,18 +76,22 @@ trait isMedia
         return $this->isMediaType('location');
     }
 
+    /**
+     * سریع‌ترین check بدون loop
+     */
     public function isMedia(): bool
     {
-        foreach (self::$mediaTypes as $type => $constant) {
-            if ($this->isMediaType($type)) {
-                return true;
-            }
-        }
-        return false;
+        return isset(self::MEDIA_TYPES[$this->mediaType()]);
     }
 
+    /**
+     * امن‌تر + سریع‌تر + بدون notice
+     */
     protected function isMediaType(string $type): bool
     {
-        return $this->mediaType() === self::$mediaTypes[$type];
+        $current = $this->mediaType();
+
+        return isset(self::MEDIA_TYPES[$type])
+            && $current === self::MEDIA_TYPES[$type];
     }
 }

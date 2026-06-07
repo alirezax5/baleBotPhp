@@ -1,166 +1,204 @@
 <?php
 
+declare(strict_types=1);
+
 namespace baleBotPhp;
 
 use baleBotPhp\Traits\{isChatTypes, isMedia, isUpdates, method, otherTrait};
-use baleBotPhp\Types\{BaseType,
-    CallbackQuery,
-    Message,
-    PreCheckoutQuery,
-};
+use baleBotPhp\Types\{BaseType, CallbackQuery, Message, PreCheckoutQuery};
 
 class bale
 {
     use isUpdates, isChatTypes, isMedia, method, otherTrait;
 
-    private const API_URL = '{url}/bot{token}/{method}';
-    private const FILE_URL = '{url}/file/bot{token}/{file_path}';
-    const PRIVATE = 'private';
-    const GROUP = 'group';
-    const SUPERGROUP = 'supergroup';
-    const CHANNEL = 'channel';
-    const _PHOTO = 'photo';
-    const _VIDEO = 'video';
-    const _FORWARD = 'forward';
-    const _VIDEO_NOTE = 'video_note';
-    const _AUDIO = 'audio';
-    const _VOICE = 'voice';
-    const _ANIMATION = 'animation';
-    const _STICKER = 'sticker';
-    const _DOCUMENT = 'document';
-    const _LOCATION = 'location';
-    const _CONTACT = 'contact';
-    const _GAME = 'game';
-    const _TEXT = 'text';
-    const _MEDIA = 'media';
-    public $urlFile = '{url}/file/bot{token}';
+    private const API_BASE_URL = 'https://tapi.bale.ai';
+    private const DEFAULT_FILE_URL_TEMPLATE = '{url}/file/bot{token}/{file_path}';
 
-    private const CACHE_KEYS = [
-        'message' => null,
-        'edited_message' => null,
-        'callback_query' => null,
-        'pre_checkout_query' => null
-    ];
-    private const caches = [
-        'chatType' => null,
-        'text' => null,
-        'message_id' => null,
-        'chatId' => null,
-        'fromId' => null,
-        'msgType' => null,
-        'mediaType' => null,
-        'fileId' => null,
-        'firstName' => null,
-        'lastName' => null,
-        'username' => null,
-        'caption' => null,
-        'language_code' => null,
-        'is_premium' => null,
-    ];
-    private array $data = [];
-    private array $cacheType = self::CACHE_KEYS;
-    private array $cacheField = self::caches;
+    // Chat Types
+    public const PRIVATE    = 'private';
+    public const GROUP      = 'group';
+    public const SUPERGROUP = 'supergroup';
+    public const CHANNEL    = 'channel';
+
+    // Message Types
+    public const _PHOTO      = 'photo';
+    public const _VIDEO      = 'video';
+    public const _FORWARD    = 'forward';
+    public const _VIDEO_NOTE = 'video_note';
+    public const _AUDIO      = 'audio';
+    public const _VOICE      = 'voice';
+    public const _ANIMATION  = 'animation';
+    public const _STICKER    = 'sticker';
+    public const _DOCUMENT   = 'document';
+    public const _LOCATION   = 'location';
+    public const _CONTACT    = 'contact';
+    public const _GAME       = 'game';
+    public const _TEXT       = 'text';
+    public const _MEDIA      = 'media';
+
+    public string $urlFile;           // برای سازگاری عقب‌گرد
+
+    private \stdClass $data;
+    private array $cacheType = [];
+    private array $cacheField = [];
+
     private string $botToken;
     private string $apiUrl;
-    private string $fileUrl;
+    private string $fileUrlTemplate;
 
-    public function __construct(string $token, string $apiUrl = 'https://tapi.bale.ai', $urlForFile = '{url}/file/bot{token}')
-    {
+    public function __construct(
+        string $token,
+        string $apiUrl = self::API_BASE_URL,
+        string $fileUrlTemplate = self::DEFAULT_FILE_URL_TEMPLATE
+    ) {
         $this->botToken = $token;
-        $this->apiUrl = $apiUrl;
-        $this->urlFile = (string)$urlForFile;
-        $this->fileUrl = str_replace('{url}', $apiUrl, self::FILE_URL);
+        $this->apiUrl = rtrim($apiUrl, '/');
+        $this->fileUrlTemplate = $fileUrlTemplate;
+        $this->urlFile = $fileUrlTemplate; // سازگاری با کدهای قدیمی
+
         $this->initialize();
     }
 
     private function initialize(): void
     {
-        $this->data = $this->getInputData();
+        $input = file_get_contents('php://input') ?: '{}';
+        $decoded = json_decode($input, false);
+
+        $this->data = $decoded instanceof \stdClass ? $decoded : new \stdClass();
+
         $this->clearCache();
     }
 
-    public function getInputData(): array
+    // ====================== Input Data Management ======================
+
+    public function getInputData(): \stdClass
     {
-        return json_decode(file_get_contents('php://input'), true) ?? [];
+        return $this->data;
     }
 
-    public function setInputData($data)
+    public function setInputData(array|\stdClass|BaseType $data): \stdClass
     {
         $this->clearCache();
-        return $this->data = $data;
+
+        if ($data instanceof BaseType) {
+            $data = json_decode(json_encode($data, JSON_UNESCAPED_UNICODE), false);
+        }
+
+        if (is_array($data)) {
+            $data = json_decode(json_encode($data, JSON_UNESCAPED_UNICODE), false);
+        }
+
+        return $this->data = $data instanceof \stdClass ? $data : new \stdClass();
     }
 
     public function clearCache(): void
     {
-        $this->cacheType = self::CACHE_KEYS;
-        $this->cacheField = self::caches;
+        $this->cacheType = [];
+        $this->cacheField = [];
     }
 
-    public function bot(string $method, array $data = [], bool $isUpload = false): array
+    // ====================== Core API Call ======================
+
+    public function bot(string $method, array $data = [], bool $isUpload = false): ?\stdClass
     {
-        $data = $this->prepareData($data);
         $url = $this->buildUrl($method);
+        $data = $this->prepareData($data);
 
         $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
+
+        $options = [
+            CURLOPT_URL            => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $data,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_USERAGENT => 'Bale Bot API Client/1.0',
-        ]);
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $data,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 30,           // افزایش زمان
+            CURLOPT_SSL_VERIFYPEER  => true,
+            CURLOPT_USERAGENT      => 'Bale Bot API Client/2.0 (PHP)',
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        ];
+
+        // اگر آپلود فایل باشد، تنظیمات خاص
+        if ($isUpload) {
+            $options[CURLOPT_POST] = true;
+            $options[CURLOPT_SAFE_UPLOAD] = true;
+        }
+
+        curl_setopt_array($ch, $options);
 
         $response = curl_exec($ch);
-        $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error    = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
         curl_close($ch);
 
-        return json_decode($response, true) ?? [];
+        if ($response === false) {
+            return (object)[
+                'ok'        => false,
+                'error'     => $error,
+                'http_code' => $httpCode,
+            ];
+        }
+
+        $decoded = json_decode($response, false);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return (object)[
+                'ok'        => false,
+                'error'     => json_last_error_msg(),
+                'http_code' => $httpCode,
+            ];
+        }
+
+        return $decoded;
     }
 
     private function prepareData(array $data): array
     {
-        $data['reply_markup'] = $data['reply_markup'] ?? ['inline_keyboard' => []];
-        $data['reply_markup'] = json_encode($data['reply_markup']);
+        // prepareData اصلی حالا در trait method است
+        // این متد فقط برای سازگاری نگه داشته شده یا می‌توان حذف کرد
         return $data;
     }
 
     private function buildUrl(string $method): string
     {
-        return str_replace(
-            ['{url}', '{token}', '{method}'],
-            [$this->apiUrl, $this->botToken, $method],
-            self::API_URL
-        );
+        return "{$this->apiUrl}/bot{$this->botToken}/{$method}";
     }
+
+    // ====================== File URL Helpers ======================
 
     public function getFileUrl(string $filePath): string
     {
         return str_replace(
             ['{url}', '{token}', '{file_path}'],
-            [$this->apiUrl, $this->botToken, $filePath],
-            self::FILE_URL
+            [$this->apiUrl, $this->botToken, ltrim($filePath, '/')],
+            $this->fileUrlTemplate
         );
     }
 
+    public function getFileDownloadUrl(string $filePath): string
+    {
+        return $this->getFileUrl($filePath);
+    }
+
+    // ====================== Update Helpers ======================
+
     public function getUpdateId(): int
     {
-        return $this->data['update_id'] ?? 0;
+        return $this->data->update_id ?? 0;
     }
 
     public function checkUpdateExists(string $key): bool
     {
-        return isset($this->data[$key]) && !empty($this->data[$key]);
+        return isset($this->data->$key) && !empty($this->data->$key);
     }
-
 
     private function getCachedUpdate(string $key, string $class): ?BaseType
     {
-        if (!isset($this->cacheType[$key]) && $this->checkUpdateExists($key)) {
-            $this->cacheType[$key] = $class::create($this->data[$key]);
+        if (!array_key_exists($key, $this->cacheType) && $this->checkUpdateExists($key)) {
+            $this->cacheType[$key] = new $class($this->data->$key);
         }
+
         return $this->cacheType[$key] ?? null;
     }
 
@@ -183,6 +221,4 @@ class bale
     {
         return $this->getCachedUpdate('pre_checkout_query', PreCheckoutQuery::class);
     }
-
-
 }
