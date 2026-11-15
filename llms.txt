@@ -1,0 +1,88 @@
+# baleBotPhp
+
+Lightweight PHP 8.1+ wrapper for the Bale Bot API — zero runtime dependencies, 186 bot methods, 199 typed response/entity classes. Current release: 3.3.0.
+
+- Full coverage of every current Bale Bot API method (186 methods, 199 types).
+- Zero runtime dependencies: uses only PHP + cURL.
+- Typed responses via `BaseType` subclass with lazy `__get` + `toArray()`.
+- Built-in HTTP retry with exponential backoff and 429 `retry_after` handling.
+- Long-polling safe: cURL timeout auto-raised to `getUpdates(timeout)+5`, reset per call (3.3.0).
+- Reusable cURL handle for polling efficiency.
+- Token stack for multi-bot switching: `switchToken()`, `restoreToken()`, `clearTokenStack()`, `getTokenStackCount()`.
+- Raw API access: `callRaw($method, $data)` returns the full decoded stdClass response.
+- Nested API parameters are auto-JSON-encoded (`reply_markup`, `prices`, `options`, `commands`, `errors`, `permissions`, `result(s)`, `checklist`, `message_ids`, `allowed_updates`, `entities`, `caption_entities`, `text_entities`, `explanation_entities`, `reaction`, `emoji_list`, `keywords`, `custom_emoji_ids`, `mask_position`, `stickers`, `suggested_tip_amounts`, `rights`, `chat_administrator_rights`, `link_preview_options`, `reply_parameters`, ...).
+- Null parameters are stripped from every payload; local file paths are converted to CURLFile before JSON encoding (media, sticker, stickers, thumbnail).
+- Convenience getters: `text()`, `chatId()`, `mediaType()`, `fromId()`, etc.
+- PSR-4 autoloaded under `baleBotPhp\` namespace.
+
+## 3.3.0 fixes (do not regress)
+
+- `getChatMember()` was broken in 3.2.1 (missing `returnedChatMember` import in ChatAdministration.php) — fixed.
+- `forwardMessages`/`copyMessages`/`deleteMessages` (`message_ids`), `answerInlineQuery` (`results`), `getUpdates`/`setWebhook` (`allowed_updates`), `setMessageReaction` (`reaction`) now JSON-encode their array parameters — raw PHP arrays caused "Bad Request: can't parse".
+- File-bearing fields are owned by `prepareMediaForUpload()` and must never be added to the jsonFields list (`media`, `thumbnail`, `sticker`, `stickers`, `photo`, ...).
+- Persistent cURL handle: `CURLOPT_TIMEOUT` resets to `curlTimeout` on every call before long-poll raises it.
+
+## Multi-bot
+
+- Pattern 1: independent `new bale($token)` instances — full isolation (own handle/cache/identity). Use for constant dual-bot operation, e.g. membership checks via bot #2's token.
+- Pattern 2: token stack on one instance — `switchToken($t2); ...; restoreToken()` (LIFO). Use for bracketed excursions; always restore in `finally`.
+- `callRaw($method, $data)` for diagnostics/recent methods.
+- Framework integration: BaleBase `BotManager` + `BOT_EXTRA_BOTS="name:token,..."` env; guard `has($name)` before `get($name)` (unknown names fall back to the MAIN bot silently).
+- Verified live 2026-10-11 with two real bots: identity/isolation/cross-send/getChatMember/token-stack all PASS; full suite 5/5 in 393 ms.
+
+## Files
+
+- src/Bale.php — core class: HTTP client, update parser, token stack, retry, caching
+- src/Traits/Updates.php — polling + webhook methods (7)
+- src/Traits/Messages.php — messaging methods: send/edit/ephemeral/rich (45)
+- src/Traits/ChatAdministration.php — chat/admin/forum/callback (51)
+- src/Traits/Stickers.php — sticker set management (16)
+- src/Traits/PaymentsAndGames.php — payments/stars/games (11)
+- src/Traits/Business.php — business/managed-bot/story/inline/user-verify (36)
+- src/Traits/BotSettings.php — bot profile/commands/menu (20)
+- src/Traits/isUpdates.php — boolean update type checkers (23)
+- src/Traits/isChatTypes.php — boolean chat type checkers (4)
+- src/Traits/isMedia.php — boolean media type checkers (12)
+- src/Traits/otherTrait.php — convenience getters (19)
+- src/Traits/method.php — aggregator trait, call(), callRaw(), prepareBotData()
+- src/Types/BaseType.php — abstract type base
+- src/Types/Message.php — Message entity
+- src/Types/User.php — User entity
+- src/Types/Chat.php — Chat entity
+- src/Types/InputRichMessage.php — rich message input type
+- src/Types/returned.php — generic response
+- src/Types/returnedMessage.php — message response
+- src/Types/returnedChatMember.php — chat member response
+- CHANGELOG.md — release history (3.3.0: getChatMember fix, JSON params completion, null-strip, timeout reset; live two-bot verification)
+- README.fa.md — Persian (RTL) documentation mirror
+- docs/architecture/methods.md — full method listing grouped by trait
+- docs/architecture/overview.md — project overview and goals
+- docs/architecture/bale-class.md — core class reference
+- docs/architecture/type-system.md — type system docs
+- docs/guides/webhook-vs-polling.md — delivery mode guide
+- docs/guides/retry-and-resilience.md — retry strategy docs
+- docs/guides/multi-bot.md — two bots in one process (patterns, pitfalls, live evidence)
+- docs/guides/mini-apps.md — Mini App initData validation (WebApp\InitData: HMAC-SHA256 "WebAppData" scheme, max_age replay window, validate/valid/user/build API, endpoint pattern, security checklist)
+
+## Structure
+
+src/
+├── Bale.php          — core class (HTTP client, update parser, token stack, retry)
+├── Traits/
+│   ├── method.php        — aggregator trait (+ callRaw, prepareBotData)
+│   ├── Updates.php       — getUpdates, setWebhook, getMe, ...
+│   ├── Messages.php      — 45 messaging methods
+│   ├── ChatAdministration.php — 51 chat/admin methods
+│   ├── Stickers.php      — 16 sticker methods
+│   ├── PaymentsAndGames.php — 11 payments/games methods
+│   ├── Business.php      — 36 business methods
+│   ├── BotSettings.php   — 20 bot settings methods
+│   ├── isUpdates.php     — boolean update checkers
+│   ├── isChatTypes.php   — boolean chat checkers
+│   ├── isMedia.php       — boolean media checkers
+│   └── otherTrait.php    — convenience getters
+├── WebApp/
+│   └── InitData.php      — Mini App initData validator (HMAC-SHA256, validate/valid/user/build)
+└── Types/
+    ├── BaseType.php      — abstract type base
+    └── *.php             — 199 response/entity types

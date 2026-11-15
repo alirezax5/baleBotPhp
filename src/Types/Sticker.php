@@ -13,9 +13,11 @@ namespace baleBotPhp\Types;
  * @property int $height Sticker height.
  * @property bool $is_animated True if the sticker is animated.
  * @property bool $is_video True if the sticker is a video sticker.
+ * @property PhotoSize|null $thumbnail Optional. Sticker thumbnail in .WEBP or .JPG format.
  * @property string|null $emoji Optional. Emoji associated with the sticker.
  * @property string|null $set_name Optional. Name of the sticker set to which the sticker belongs.
  * @property File|null $premium_animation Optional. For premium regular stickers, premium animation.
+ * @property MaskPosition|null $mask_position Optional. For mask stickers, the position of the mask.
  * @property string|null $custom_emoji_id Optional. Unique ID for custom emoji stickers.
  * @property bool|null $needs_repainting Optional. True if the sticker needs to be repainted.
  * @property int|null $file_size Optional. File size in bytes.

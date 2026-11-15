@@ -1,8 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class ChatPhoto
  * Represents a chat photo with small and big versions.

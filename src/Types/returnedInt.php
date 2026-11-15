@@ -3,8 +3,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class returnedInt
  * @package baleBotPhp\Types

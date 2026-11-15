@@ -1,8 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class WebhookInfo
  * Describes the current status of a webhook.

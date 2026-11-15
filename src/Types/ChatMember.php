@@ -1,9 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-use baleBotPhp\Types\User;
-
 /**
  * Class ChatMember
  * This object contains information about one member of a chat.

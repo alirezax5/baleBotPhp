@@ -2,8 +2,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\{Types\BaseType, Types\PhotoSize};
-
 /**
  * Class Document
  * Represents a general file (excluding photos, voice messages, and audio files).

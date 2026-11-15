@@ -2,8 +2,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\{BaseType, PhotoSize};
-
 /**
  * Class Animation
  * Represents an animation file (GIF or H.264/MPEG-4 AVC video without sound).

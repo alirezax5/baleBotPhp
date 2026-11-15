@@ -2,8 +2,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class PhotoSize
  * Represents one size of a photo or a file/sticker thumbnail.

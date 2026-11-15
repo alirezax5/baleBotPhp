@@ -1,8 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class MessageId
  * This object represents a unique message identifier.

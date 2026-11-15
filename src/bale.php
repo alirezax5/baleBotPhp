@@ -5,15 +5,37 @@ declare(strict_types=1);
 namespace baleBotPhp;
 
 use baleBotPhp\Traits\{isChatTypes, isMedia, isUpdates, method, otherTrait};
-use baleBotPhp\Types\{BaseType, CallbackQuery, Message, PreCheckoutQuery};
+use baleBotPhp\Types\{BaseType,
+    BusinessMessagesDeleted,
+    CallbackQuery,
+    ChatBoostRemoved,
+    ChatBoostUpdated,
+    ChatJoinRequest,
+    ChatMemberUpdated,
+    ChosenInlineResult,
+    InlineQuery,
+    Message,
+    MessageReactionCountUpdated,
+    MessageReactionUpdated,
+    PaidMediaPurchased,
+    Poll,
+    PollAnswer,
+    PreCheckoutQuery,
+    ShippingQuery};
 
+/**
+ * Lightweight PHP wrapper for the Bale Bot API (https://tapi.bale.ai).
+ *
+ * Mirrors the telegramBotPhp skeleton; Bale-specific methods:
+ * askReview(), inquireTransaction() (+ payments without Stars).
+ */
 class bale
 {
     use isUpdates,
         isChatTypes,
         isMedia,
         method,
-        otherTrait ;
+        otherTrait;
 
     private const API_BASE_URL = 'https://tapi.bale.ai';
     private const DEFAULT_FILE_URL_TEMPLATE = '{url}/file/bot{token}/{file_path}';
@@ -21,27 +43,29 @@ class bale
     // Retry Settings
     private int $maxRetries = 3;
     private int $retryDelayMs = 500;
+    private int $curlTimeout = 30;
+    private ?\CurlHandle $curlHandle = null;
 
     // Chat & Message Types
-    public const PRIVATE    = 'private';
-    public const GROUP      = 'group';
+    public const PRIVATE = 'private';
+    public const GROUP = 'group';
     public const SUPERGROUP = 'supergroup';
-    public const CHANNEL    = 'channel';
+    public const CHANNEL = 'channel';
 
-    public const _PHOTO      = 'photo';
-    public const _VIDEO      = 'video';
-    public const _FORWARD    = 'forward';
+    public const _PHOTO = 'photo';
+    public const _VIDEO = 'video';
+    public const _FORWARD = 'forward';
     public const _VIDEO_NOTE = 'video_note';
-    public const _AUDIO      = 'audio';
-    public const _VOICE      = 'voice';
-    public const _ANIMATION  = 'animation';
-    public const _STICKER    = 'sticker';
-    public const _DOCUMENT   = 'document';
-    public const _LOCATION   = 'location';
-    public const _CONTACT    = 'contact';
-    public const _GAME       = 'game';
-    public const _TEXT       = 'text';
-    public const _MEDIA      = 'media';
+    public const _AUDIO = 'audio';
+    public const _VOICE = 'voice';
+    public const _ANIMATION = 'animation';
+    public const _STICKER = 'sticker';
+    public const _DOCUMENT = 'document';
+    public const _LOCATION = 'location';
+    public const _CONTACT = 'contact';
+    public const _GAME = 'game';
+    public const _TEXT = 'text';
+    public const _MEDIA = 'media';
 
     public string $urlFile;
 
@@ -60,15 +84,19 @@ class bale
         string $token,
         string $apiUrl = self::API_BASE_URL,
         string $fileUrlTemplate = self::DEFAULT_FILE_URL_TEMPLATE,
-        int $maxRetries = 3,
-        int $retryDelayMs = 500
-    ) {
+        int    $maxRetries = 3,
+        int    $retryDelayMs = 500,
+        int    $curlTimeout = 30
+    )
+    {
         $this->apiUrl = rtrim($apiUrl, '/');
         $this->fileUrlTemplate = $fileUrlTemplate;
         $this->urlFile = $fileUrlTemplate;
 
         $this->maxRetries = $maxRetries;
         $this->retryDelayMs = $retryDelayMs;
+        $this->curlTimeout = max(5, $curlTimeout);
+        $this->curlHandle = null;
 
         $this->setToken($token);
         $this->initialize();
@@ -87,7 +115,11 @@ class bale
     public function setToken(string $token): self
     {
         $this->botToken = $token;
-        $this->urlFile = str_replace('{token}', $token, $this->fileUrlTemplate);
+        $template = $this->fileUrlTemplate;
+        if (!str_contains($template, '{file_path}')) {
+            $template = rtrim($template, '/') . '/file/bot{token}/{file_path}';
+        }
+        $this->urlFile = str_replace(['{url}', '{token}'], [$this->apiUrl, $token], $template);
         $this->clearCache();
         return $this;
     }
@@ -97,6 +129,9 @@ class bale
         return $this->botToken;
     }
 
+    /**
+     * Clone this instance bound to another token (immutable multi-bot helper).
+     */
     public function withToken(string $token): self
     {
         $clone = clone $this;
@@ -105,32 +140,21 @@ class bale
         return $clone;
     }
 
-    /**
-     * تغییر موقت توکن (ذخیره توکن قبلی)
-     */
     public function switchToken(string $newToken): self
     {
         $this->tokenStack[] = $this->botToken;
         $this->setToken($newToken);
-
-        // LogHandler::debug("🔄 Token switched → {$newToken} | Stack: " . count($this->tokenStack));
         return $this;
     }
 
-    /**
-     * بازگشت به توکن قبلی
-     */
     public function restoreToken(): self
     {
         if (empty($this->tokenStack)) {
-            // LogHandler::warning("⚠️ Token stack is empty");
             return $this;
         }
 
         $previousToken = array_pop($this->tokenStack);
         $this->setToken($previousToken);
-
-        // LogHandler::debug("🔙 Token restored → {$previousToken} | Remaining: " . count($this->tokenStack));
         return $this;
     }
 
@@ -145,42 +169,111 @@ class bale
         return count($this->tokenStack);
     }
 
-    // ====================== Core API Call ======================
+    // ====================== Core API ======================
+
+    /** @var ?\Closure API trace hook — set via onApiCall(); fires once per API call. */
+    private static ?\Closure $apiTraceCallback = null;
+
+    /**
+     * Register a process-wide observer fired after EVERY Bot API call
+     * (all instances, all tokens). Receives one compact $info array:
+     * [method, duration_ms, ok, chat_id?, error_code?, description?, retry_after?].
+     * Full payloads are intentionally NOT passed — keep logging cheap and
+     * private. Pass null to unregister. Used by baleBase's LOG_API_TRACE.
+     */
+    public static function onApiCall(?\Closure $callback): void
+    {
+        self::$apiTraceCallback = $callback;
+    }
 
     public function bot(string $method, array $data = [], bool $isUpload = false): ?\stdClass
     {
-        $url = $this->buildUrl($method);
-        $attempt = 0;
+        // Normalize EVERY payload at the raw choke point (2026-10-13).
+        // Raw callers previously bypassed prepareBotData(), so array
+        // reply_markup / prices / entities / allowed_updates went over
+        // the wire as PHP-array POST fields and bale answered
+        // "can't parse ... JSON object" (found in production: every
+        // keyboard-bearing edit 400'd silently). Typed methods already
+        // normalize; prepareBotData() is idempotent (is_array guards +
+        // CURLFile passthrough), so double preparation is a no-op.
+        $data = $this->prepareBotData($data);
 
-        while ($attempt <= $this->maxRetries) {
-            $ch = curl_init();
+        $t0 = microtime(true);
+        $result = $this->botExecute($method, $data, $isUpload);
+        $this->traceApiCall($method, $data, $t0, $result);
 
-            $options = [
-                CURLOPT_URL            => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => $data,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT        => 30,
-                CURLOPT_SSL_VERIFYPEER  => true,
-                CURLOPT_USERAGENT      => 'Bale Bot API Client/2.0 (PHP)',
-                CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        return $result;
+    }
+
+    private function traceApiCall(string $method, array $data, float $t0, ?\stdClass $result): void
+    {
+        if (self::$apiTraceCallback === null) {
+            return;
+        }
+
+        try {
+            $ok = is_object($result) && !empty($result->ok);
+
+            $info = [
+                'method'      => $method,
+                'duration_ms' => (int) round((microtime(true) - $t0) * 1000),
+                'ok'          => $ok,
             ];
 
-            if ($isUpload) {
-                $options[CURLOPT_SAFE_UPLOAD] = true;
+            if (isset($data['chat_id']) && is_scalar($data['chat_id'])) {
+                $info['chat_id'] = $data['chat_id'];
             }
 
-            curl_setopt_array($ch, $options);
+            if (!$ok && is_object($result)) {
+                $info['error_code']  = $result->error_code ?? $result->http_code ?? null;
+                $info['description'] = $result->description ?? $result->error ?? null;
+                if (isset($result->parameters->retry_after)) {
+                    $info['retry_after'] = $result->parameters->retry_after;
+                }
+            }
 
-            $response = curl_exec($ch);
-            $curlError = curl_error($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            (self::$apiTraceCallback)($info);
+        } catch (\Throwable) {
+            // Tracing must never break an API call.
+        }
+    }
+
+    private function botExecute(string $method, array $data = [], bool $isUpload = false): ?\stdClass
+    {
+        $url = $this->buildUrl($method);
+        $attempt = 0;
+        $curlError = '';
+        $httpCode = 0;
+        $retryAfter = 0;
+        $handle = $this->getCurlHandle();
+
+        while ($attempt <= $this->maxRetries) {
+            // Reset the per-call timeout on the persistent handle first: a
+            // previous long-poll getUpdates may have raised it, and non-poll
+            // calls must not inherit that raised timeout.
+            curl_setopt($handle, CURLOPT_TIMEOUT, $this->curlTimeout);
+            curl_setopt($handle, CURLOPT_URL, $url);
+            curl_setopt($handle, CURLOPT_POSTFIELDS, $data);
+
+            // Long polling: let the request outlive the curl timeout so we don't cut
+            // the connection before bale answers (getUpdates may hold up to 50-60s).
+            if ($method === 'getUpdates' && isset($data['timeout']) && $data['timeout'] !== null) {
+                curl_setopt($handle, CURLOPT_TIMEOUT, (int) $data['timeout'] + 5);
+            }
+
+            $response = curl_exec($handle);
+            $curlError = (string) curl_error($handle);
+            $httpCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
 
             if ($response !== false) {
                 $decoded = json_decode($response, false);
                 if (json_last_error() === JSON_ERROR_NONE) {
+                    $retryAfter = $this->extractRetryAfter($decoded);
+                    if ($retryAfter > 0 && $this->shouldRetry($curlError, $httpCode, $attempt)) {
+                        usleep($retryAfter * 1_000_000);
+                        $attempt++;
+                        continue;
+                    }
                     return $decoded;
                 }
             }
@@ -195,11 +288,59 @@ class bale
         }
 
         return (object)[
-            'ok'        => false,
-            'error'     => $curlError ?: 'API Error after ' . $attempt . ' attempts',
-            'http_code' => $httpCode ?? 0,
-            'attempts'  => $attempt,
+            'ok' => false,
+            'error' => $curlError ?: 'API Error after ' . $attempt . ' attempts',
+            'http_code' => $httpCode,
+            'attempts' => $attempt,
         ];
+    }
+
+    private function extractRetryAfter(\stdClass $decoded): int
+    {
+        if (isset($decoded->parameters->retry_after) && is_numeric($decoded->parameters->retry_after)) {
+            return (int) $decoded->parameters->retry_after;
+        }
+
+        return 0;
+    }
+
+    private function getCurlHandle(): \CurlHandle
+    {
+        if ($this->curlHandle instanceof \CurlHandle) {
+            return $this->curlHandle;
+        }
+
+        $handle = curl_init();
+
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => $this->curlTimeout,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_USERAGENT => 'Bale Bot API Client/3.0 (PHP)',
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_SAFE_UPLOAD => true,
+        ];
+
+        curl_setopt_array($handle, $options);
+
+        return $this->curlHandle = $handle;
+    }
+
+    public function close(): void
+    {
+        if ($this->curlHandle instanceof \CurlHandle) {
+            // No curl_close() — deprecated since PHP 8.5 and a no-op since
+            // 8.0; dropping the reference lets the engine free the handle
+            // with identical effect and no deprecation notice on 8.5+.
+            $this->curlHandle = null;
+        }
+    }
+
+    public function __destruct()
+    {
+        $this->close();
     }
 
     private function shouldRetry(string $curlError, int $httpCode, int $attempt): bool
@@ -211,7 +352,6 @@ class bale
         return false;
     }
 
-    // بقیه متدها (buildUrl, getFileUrl, getInputData, setInputData, clearCache و ...) بدون تغییر
     private function buildUrl(string $method): string
     {
         return "{$this->apiUrl}/bot{$this->botToken}/{$method}";
@@ -219,10 +359,20 @@ class bale
 
     public function getFileUrl(string $filePath): string
     {
+        $template = $this->fileUrlTemplate;
+        if (!str_contains($template, '{file_path}')) {
+            // Tolerate a plain base URL passed where a template is expected
+            // (older BotManager versions pass BOT_API_URL_FILE directly).
+            // Without this, every file download collapsed to the API root
+            // and fetched the tapi.bale.ai HTML portal instead of the
+            // file (HTTP 200 text/html — finfo then rejected it).
+            $template = rtrim($template, '/') . '/file/bot{token}/{file_path}';
+        }
+
         return str_replace(
             ['{url}', '{token}', '{file_path}'],
             [$this->apiUrl, $this->botToken, ltrim($filePath, '/')],
-            $this->fileUrlTemplate
+            $template
         );
     }
 
@@ -252,7 +402,6 @@ class bale
         $this->cacheField = [];
     }
 
-    // متدهای getCachedUpdate, message(), editedMessage() و ... (بدون تغییر)
     private function getCachedUpdate(string $key, string $class): ?BaseType
     {
         if (!array_key_exists($key, $this->cacheType) && $this->checkUpdateExists($key)) {
@@ -279,6 +428,92 @@ class bale
     public function preCheckoutQuery(): ?PreCheckoutQuery
     {
         return $this->getCachedUpdate('pre_checkout_query', PreCheckoutQuery::class);
+    }
+
+    // bale Specific Updates
+    public function channelPost(): ?Message
+    {
+        return $this->getCachedUpdate('channel_post', Message::class);
+    }
+
+    public function editedChannelPost(): ?Message
+    {
+        return $this->getCachedUpdate('edited_channel_post', Message::class);
+    }
+
+    public function businessMessage(): ?Message
+    {
+        return $this->getCachedUpdate('business_message', Message::class);
+    }
+
+    public function editedBusinessMessage(): ?Message
+    {
+        return $this->getCachedUpdate('edited_business_message', Message::class);
+    }
+
+    public function deletedBusinessMessages(): ?BusinessMessagesDeleted
+    {
+        return $this->getCachedUpdate('deleted_business_messages', BusinessMessagesDeleted::class);
+    }
+
+    public function messageReaction(): ?MessageReactionUpdated
+    {
+        return $this->getCachedUpdate('message_reaction', MessageReactionUpdated::class);
+    }
+
+    public function messageReactionCount(): ?MessageReactionCountUpdated
+    {
+        return $this->getCachedUpdate('message_reaction_count', MessageReactionCountUpdated::class);
+    }
+
+    public function inlineQuery(): ?InlineQuery
+    {
+        return $this->getCachedUpdate('inline_query', InlineQuery::class);
+    }
+
+    public function chosenInlineResult(): ?ChosenInlineResult
+    {
+        return $this->getCachedUpdate('chosen_inline_result', ChosenInlineResult::class);
+    }
+
+    public function shippingQuery(): ?ShippingQuery
+    {
+        return $this->getCachedUpdate('shipping_query', ShippingQuery::class);
+    }
+
+    public function purchasedPaidMedia(): ?PaidMediaPurchased
+    {
+        return $this->getCachedUpdate('purchased_paid_media', PaidMediaPurchased::class);
+    }
+    public function poll(): ?Poll
+    {
+        return $this->getCachedUpdate('poll', Poll::class);
+    }
+    public function pollAnswer(): ?PollAnswer
+    {
+        return $this->getCachedUpdate('poll_answer', PollAnswer::class);
+    }
+
+    public function myChatMember(): ?ChatMemberUpdated
+    {
+        return $this->getCachedUpdate('my_chat_member', ChatMemberUpdated::class);
+    }
+    public function chatMember(): ?ChatMemberUpdated
+    {
+        return $this->getCachedUpdate('chat_member', ChatMemberUpdated::class);
+    }
+
+    public function chatJoinRequest(): ?ChatJoinRequest
+    {
+        return $this->getCachedUpdate('chat_join_request', ChatJoinRequest::class);
+    }
+    public function chatBoost(): ?ChatBoostUpdated
+    {
+        return $this->getCachedUpdate('chat_boost', ChatBoostUpdated::class);
+    }
+    public function removedChatBoost(): ?ChatBoostRemoved
+    {
+        return $this->getCachedUpdate('removed_chat_boost', ChatBoostRemoved::class);
     }
 
     public function checkUpdateExists(string $key): bool

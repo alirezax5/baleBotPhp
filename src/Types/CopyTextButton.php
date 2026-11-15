@@ -1,8 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class CopyTextButton
  * Represents an inline keyboard button that copies specified text to the clipboard.

@@ -2,8 +2,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class Chat
  * This object represents a chat.
@@ -14,6 +12,7 @@ use baleBotPhp\Types\BaseType;
  * @property string|null $username Optional. Username, for private chats, supergroups, and channels if available.
  * @property string|null $first_name Optional. First name of the other party in a private chat.
  * @property string|null $last_name Optional. Last name of the other party in a private chat.
+ * @property bool|null $is_forum True, if the supergroup chat is a forum (has topics enabled).
  */
 class Chat extends BaseType
 {

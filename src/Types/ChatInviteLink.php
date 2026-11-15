@@ -1,9 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-use baleBotPhp\Types\User;
-
 /**
  * Class ChatInviteLink
  * Represents an invite link for a chat with various properties regarding its status and limitations.
@@ -18,7 +15,7 @@ use baleBotPhp\Types\User;
  * @property int $member_limit Optional. Max number of members allowed via this link
  * @property int $pending_join_request_count Optional. Number of pending join requests
  * @property int $subscription_period Optional. Subscription period duration in seconds
- * @property int $subscription_price Optional. Price in Telegram Stars for subscription
+ * @property int $subscription_price Optional. Price in bale Stars for subscription
  */
 class ChatInviteLink extends BaseType
 {

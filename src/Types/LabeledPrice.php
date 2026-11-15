@@ -1,8 +1,6 @@
 <?php
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-
 /**
  * Class LabeledPrice
  * This object represents a portion of the price for goods or services.

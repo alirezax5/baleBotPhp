@@ -3,9 +3,6 @@
 
 namespace baleBotPhp\Types;
 
-use baleBotPhp\Types\BaseType;
-use baleBotPhp\Types\MessageId;
-
 /**
  * Class returned
  * @package baleBotPhp\Types
